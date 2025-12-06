@@ -59,7 +59,6 @@ def run_tcp_traceroute(target: str, max_hops: int = 30, probes: int = 3, protoco
                 'rtts': rtts,
                 'latitude': hop.get('latitude'),
                 'longitude': hop.get('longitude'),
-                'country': hop.get('country'),
                 'status': 'ok' if hop.get('status') != 'timeout' else 'timeout'
             })
         

@@ -343,6 +343,46 @@
             transform: translateX(20px);
         }
 
+        .target-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5rem;
+        }
+
+        .target-row {
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .target-row input[type="text"] {
+            flex: 1;
+        }
+
+        .target-row input[type="color"] {
+            width: 28px;
+            height: 28px;
+            padding: 0;
+            border: none;
+        }
+
+        .remove-btn {
+            background: rgba(239, 68, 68, 0.2);
+            border: none;
+            color: #ef4444;
+            width: 24px;
+            height: 24px;
+            cursor: pointer;
+        }
+
+        .add-btn {
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px dashed #6366f1;
+            color: #6366f1;
+            padding: 0.4rem;
+            cursor: pointer;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -371,7 +411,13 @@
         <div class="input-section">
             <div class="input-group">
                 <label>대상 호스트</label>
-                <input type="text" id="target" placeholder="google.com 또는 8.8.8.8">
+                <div class="target-list" id="targetList">
+                    <div class="target-row">
+                        <input type="color" value="#ef4444">
+                        <input type="text" id="target" placeholder="google.com">
+                    </div>
+                </div>
+                <button class="add-btn" id="addBtn">+ 대상 추가</button>
             </div>
             <div style="display: flex; gap: 0.75rem;">
                 <div class="input-group" style="flex:1;">
@@ -397,7 +443,7 @@
             <div class="option-row">
                 <span class="option-label">☀️ 실시간 태양 위치</span>
                 <label class="toggle-switch">
-                    <input type="checkbox" id="sunToggle" onchange="toggleSunPosition()" checked>
+                    <input type="checkbox" id="sunToggle" onchange="toggleSunPosition()">
                     <span class="toggle-slider"></span>
                 </label>
             </div>
@@ -411,6 +457,35 @@
         let scene, camera, renderer, globe, pathLines = [], hopMarkers = [], controls;
         let cloudsMesh = null, sunLight = null, ambientLight = null;
         let cloudsEnabled = true, sunEnabled = true;
+
+        var colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
+        var colorIdx = 1;
+
+        document.addEventListener('DOMContentLoaded', function () {
+            var addBtn = document.getElementById('addBtn');
+            if (addBtn) {
+                addBtn.onclick = function () {
+                    var list = document.getElementById('targetList');
+                    var row = document.createElement('div');
+                    row.className = 'target-row';
+                    var colorInput = document.createElement('input');
+                    colorInput.type = 'color';
+                    colorInput.value = colors[colorIdx % colors.length];
+                    colorIdx++;
+                    var textInput = document.createElement('input');
+                    textInput.type = 'text';
+                    textInput.placeholder = 'example.com';
+                    var removeBtn = document.createElement('button');
+                    removeBtn.className = 'remove-btn';
+                    removeBtn.textContent = 'x';
+                    removeBtn.onclick = function () { row.remove(); };
+                    row.appendChild(colorInput);
+                    row.appendChild(textInput);
+                    row.appendChild(removeBtn);
+                    list.appendChild(row);
+                };
+            }
+        });
 
         function initGlobe() {
             const container = document.getElementById('globe-container');
@@ -490,9 +565,8 @@
             });
 
 
-            // 구름과 태양 위치 기본 활성화
+            // 구름만 기본 활성화 (태양 위치는 Off)
             toggleClouds();
-            toggleSunPosition();
 
             animate();
         }
@@ -676,75 +750,120 @@
         const traceBtn = document.getElementById('traceBtn');
         const resultsDiv = document.getElementById('results');
 
-        targetInput.addEventListener('keypress', e => {
+        targetInput.addEventListener('keypress', function (e) {
             if (e.key === 'Enter') startTrace();
         });
 
         async function startTrace() {
-            const target = targetInput.value.trim();
-            if (!target) {
+            var rows = document.querySelectorAll('#targetList .target-row');
+            var targets = [];
+            rows.forEach(function (row) {
+                var colorInput = row.querySelector('input[type="color"]');
+                var textInput = row.querySelector('input[type="text"]');
+                var host = textInput.value.trim();
+                if (host) {
+                    targets.push({ host: host, color: colorInput.value });
+                }
+            });
+            if (targets.length === 0) {
                 alert('대상 호스트를 입력해주세요.');
                 return;
             }
-            const maxHops = parseInt(maxHopsInput.value) || 20;
-            const probes = parseInt(probesInput.value) || 2;
+            var maxHops = parseInt(maxHopsInput.value) || 20;
+            var probes = parseInt(probesInput.value) || 2;
 
             traceBtn.disabled = true;
             traceBtn.innerHTML = '<span class="spinner"></span>추적 중...';
-            resultsDiv.innerHTML = '<div class="loading-msg">경로를 추적하고 있습니다...<br><small>(최대 2-3분 소요)</small></div>';
+            resultsDiv.innerHTML = '';
             clearPath();
 
-            try {
-                const res = await fetch('/route/trace', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ target, max_hops: maxHops, probes })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    displayResults(data);
-                    drawPath(data.hops);
-                } else {
-                    resultsDiv.innerHTML = '<div class="error-msg">' + data.error + '</div>';
+            for (var i = 0; i < targets.length; i++) {
+                var t = targets[i];
+                resultsDiv.innerHTML = '<div class="loading-msg">' + t.host + ' 추적 중... (' + (i + 1) + '/' + targets.length + ')</div>';
+                try {
+                    var res = await fetch('/route/trace', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target: t.host, max_hops: maxHops, probes: probes })
+                    });
+                    var data = await res.json();
+                    if (data.success) {
+                        displayResults(data, t.color);
+                        drawPathColored(data.hops, t.color);
+                    }
+                } catch (e) {
+                    console.error(t.host, e);
                 }
-            } catch (e) {
-                resultsDiv.innerHTML = '<div class="error-msg">서버 연결 실패: ' + e.message + '</div>';
-            } finally {
-                traceBtn.disabled = false;
-                traceBtn.innerHTML = '🔍 경로 추적 시작';
             }
+            traceBtn.disabled = false;
+            traceBtn.innerHTML = '🔍 경로 추적 시작';
         }
 
-        function displayResults(data) {
-            const hops = data.hops || [];
-            const successCount = hops.filter(h => h.status === 'ok').length;
-            const withCoords = hops.filter(h => h.latitude != null).length;
+        function drawPathColored(hops, colorHex) {
+            var validHops = hops.filter(function (h) { return h.latitude != null && h.longitude != null; });
+            if (validHops.length === 0) return;
+            var color = parseInt(colorHex.replace('#', '0x'));
+            var startPoint = latLonToVector3(37.5665, 126.9780, 1.02);
+            var prevPoint = startPoint;
 
-            let html = '<div class="stats">' +
-                '<div class="stat-item">홉: <span class="stat-value">' + hops.length + '</span></div>' +
-                '<div class="stat-item">성공: <span class="stat-value">' + successCount + '</span></div>' +
-                '<div class="stat-item">위치: <span class="stat-value">' + withCoords + '</span></div>' +
-                '</div><div class="hop-list">';
+            // 시작점 별 마커
+            var starShape = new THREE.Shape();
+            var starPts = 5, outerR = 0.02, innerR = 0.01;
+            for (var i = 0; i < starPts * 2; i++) {
+                var r = (i % 2 === 0) ? outerR : innerR;
+                var ang = (i * Math.PI) / starPts - Math.PI / 2;
+                if (i === 0) starShape.moveTo(r * Math.cos(ang), r * Math.sin(ang));
+                else starShape.lineTo(r * Math.cos(ang), r * Math.sin(ang));
+            }
+            starShape.closePath();
+            var starM = new THREE.Mesh(new THREE.ShapeGeometry(starShape), new THREE.MeshBasicMaterial({ color: 0x00ff00, side: THREE.DoubleSide }));
+            starM.position.copy(startPoint);
+            starM.lookAt(new THREE.Vector3(0, 0, 0));
+            scene.add(starM);
+            hopMarkers.push(starM);
 
-            hops.forEach((hop, idx) => {
-                const rttStr = hop.rtts && hop.rtts.length > 0
-                    ? hop.rtts.map(r => r.toFixed(1) + 'ms').join(' / ')
-                    : '* * *';
-                const hasCoords = hop.latitude != null && hop.longitude != null;
-                const countryStr = hop.country ? ' 🌍 ' + hop.country : '';
-                html += '<div class="hop-item ' + (hop.status === 'timeout' ? 'timeout' : '') +
-                    '" data-idx="' + idx + '">' +
-                    '<div class="hop-header">' +
-                    '<span class="hop-ttl">홉 ' + hop.ttl + '</span>' +
-                    '<span class="hop-rtt ' + (hop.status === 'timeout' ? 'timeout' : '') + '">' + rttStr + '</span>' +
-                    '</div>' +
-                    '<div class="hop-host">' + (hop.hostname || '(알 수 없음)') + countryStr + '</div>' +
-                    (hop.ip ? '<div class="hop-ip">' + hop.ip + '</div>' : '') +
-                    (hasCoords ? '<div class="hop-coords">📍 ' + hop.latitude.toFixed(4) + ', ' + hop.longitude.toFixed(4) + '</div>' : '') +
-                    '</div>';
+            validHops.forEach(function (hop) {
+                var point = latLonToVector3(hop.latitude, hop.longitude, 1.02);
+                if (prevPoint.distanceTo(point) > 0.02) {
+                    var arc = createArc(prevPoint, point, color);
+                    scene.add(arc);
+                    pathLines.push(arc);
+                }
+                prevPoint = point;
             });
-            html += '</div>';
-            resultsDiv.innerHTML = html;
+
+            // 마지막 홉 위치에 네모 마커
+            var lastHop = validHops[validHops.length - 1];
+            var lastPoint = latLonToVector3(lastHop.latitude, lastHop.longitude, 1.02);
+            var endM = new THREE.Mesh(new THREE.PlaneGeometry(0.03, 0.03), new THREE.MeshBasicMaterial({ color: color, side: THREE.DoubleSide }));
+            endM.position.copy(lastPoint);
+            endM.lookAt(new THREE.Vector3(0, 0, 0));
+            scene.add(endM);
+            hopMarkers.push(endM);
+        }
+
+        function displayResults(data, colorHex) {
+            var hops = data.hops || [];
+            var pre = document.getElementById('results').querySelector('pre');
+            if (!pre) {
+                pre = document.createElement('pre');
+                pre.style.cssText = 'font-family:monospace;font-size:0.75rem;color:#a0a0b0;white-space:pre-wrap;padding:0.5rem;margin:0;';
+                document.getElementById('results').innerHTML = '';
+                document.getElementById('results').appendChild(pre);
+            }
+            var line = '';
+            if (colorHex) {
+                line += '<span style="color:' + colorHex + '">■</span> ';
+            }
+            line += 'traceroute to ' + data.target + ' (' + (data.target_ip || '') + ')\\n';
+            hops.forEach(function (hop) {
+                var rtt = (hop.rtts && hop.rtts.length > 0) ? hop.rtts.map(function (r) { return r.toFixed(1) + 'ms'; }).join(' ') : '* * *';
+                var host = hop.hostname || hop.ip || '*';
+                var country = hop.country ? ' [' + hop.country + ']' : '';
+                line += '  ' + hop.ttl + '  ' + host + country + '  ' + rtt + '\\n';
+            });
+            line += '\\n';
+            pre.innerHTML += line;
         }
 
         function focusHop(idx, lat, lon) {
