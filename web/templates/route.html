@@ -349,6 +349,19 @@
             gap: 0.5rem;
         }
 
+        /* 국가 툴팁 */
+        #countryTooltip {
+            position: fixed;
+            pointer-events: none;
+            background: rgba(0, 0, 0, 0.8);
+            color: #fff;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 0.8rem;
+            display: none;
+            z-index: 1000;
+        }
+
         .target-row {
             display: flex;
             align-items: center;
@@ -401,6 +414,7 @@
 </head>
 
 <body>
+    <div id="countryTooltip"></div>
     <div id="globe-container"></div>
     <div class="sidebar">
         <div class="sidebar-header">
@@ -569,6 +583,58 @@
             toggleClouds();
 
             animate();
+
+            // 국가 툴팁 기능
+            var tooltip = document.getElementById('countryTooltip');
+            var raycaster = new THREE.Raycaster();
+            var mouse = new THREE.Vector2();
+            var lastCountry = '';
+            var debounceTimer = null;
+
+            container.addEventListener('mousemove', function (e) {
+                var rect = container.getBoundingClientRect();
+                mouse.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+
+                raycaster.setFromCamera(mouse, camera);
+                var intersects = raycaster.intersectObject(globe);
+
+                if (intersects.length > 0) {
+                    var point = intersects[0].point;
+                    // latLonToVector3 역변환
+                    var phi = Math.acos(point.y);
+                    var theta = Math.atan2(point.z, -point.x);
+                    var lat = 90 - (phi * 180 / Math.PI);
+                    // atan2는 -π ~ π 반환, 0 ~ 2π로 정규화 후 경도 계산
+                    if (theta < 0) theta += 2 * Math.PI;
+                    var lon = (theta * 180 / Math.PI) - 180;
+
+                    tooltip.style.left = (e.clientX + 15) + 'px';
+                    tooltip.style.top = (e.clientY + 15) + 'px';
+                    tooltip.style.display = 'block';
+                    tooltip.textContent = lat.toFixed(1) + '°, ' + lon.toFixed(1) + '°';
+
+                    // 디바운스로 국가 이름 조회
+                    clearTimeout(debounceTimer);
+                    debounceTimer = setTimeout(function () {
+                        fetch('https://nominatim.openstreetmap.org/reverse?format=json&lat=' + lat + '&lon=' + lon + '&zoom=3')
+                            .then(function (r) { return r.json(); })
+                            .then(function (d) {
+                                if (d && d.address && d.address.country) {
+                                    tooltip.textContent = d.address.country;
+                                    lastCountry = d.address.country;
+                                }
+                            })
+                            .catch(function () { });
+                    }, 300);
+                } else {
+                    tooltip.style.display = 'none';
+                }
+            });
+
+            container.addEventListener('mouseleave', function () {
+                tooltip.style.display = 'none';
+            });
         }
 
         // 마커 변수
