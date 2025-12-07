@@ -7,6 +7,7 @@
     <title>Network Route Tracer - sosig.shop</title>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js?v=2"></script>
     <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js?v=2"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -396,6 +397,93 @@
             cursor: pointer;
         }
 
+        /* RTT 그래프 섹션 */
+        .rtt-graph-section {
+            padding: 1rem;
+            border-bottom: 1px solid var(--border);
+            background: rgba(16, 185, 129, 0.05);
+        }
+
+        .rtt-graph-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 0.75rem;
+        }
+
+        .rtt-graph-title {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .rtt-stats {
+            display: flex;
+            gap: 1rem;
+            font-size: 0.75rem;
+        }
+
+        .rtt-stat {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+        }
+
+        .rtt-stat-label {
+            color: var(--text-secondary);
+        }
+
+        .rtt-stat-value {
+            font-weight: 600;
+        }
+
+        .rtt-stat-value.avg {
+            color: var(--accent);
+        }
+
+        .rtt-stat-value.max {
+            color: var(--error);
+        }
+
+        .rtt-graph-container {
+            position: relative;
+            height: 120px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 0.5rem;
+            padding: 0.5rem;
+        }
+
+        .rtt-graph-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: var(--text-secondary);
+            font-size: 0.8rem;
+        }
+
+        .rtt-legend {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .rtt-legend-item {
+            display: flex;
+            align-items: center;
+            gap: 0.3rem;
+            font-size: 0.7rem;
+            color: var(--text-secondary);
+        }
+
+        .rtt-legend-color {
+            width: 10px;
+            height: 10px;
+            border-radius: 2px;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -498,6 +586,16 @@
                 </label>
             </div>
         </div>
+        <div class="rtt-graph-section" id="rttGraphSection" style="display: none;">
+            <div class="rtt-graph-header">
+                <span class="rtt-graph-title">📈 RTT 지연 그래프</span>
+                <div class="rtt-stats" id="rttStats"></div>
+            </div>
+            <div class="rtt-graph-container">
+                <canvas id="rttChart"></canvas>
+            </div>
+            <div class="rtt-legend" id="rttLegend"></div>
+        </div>
         <div class="results-section" id="results">
             <div class="loading-msg">대상 호스트를 입력하고 추적을 시작하세요</div>
         </div>
@@ -511,6 +609,10 @@
         // 애니메이션 관련 변수
         let animatedPackets = [];  // { mesh, points, progress, speed, color }
         let animationEnabled = true;
+
+        // RTT 그래프 관련 변수
+        let rttChart = null;
+        let rttDatasets = [];
 
         var colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
         var colorIdx = 1;
@@ -995,16 +1097,176 @@
                     if (data.success) {
                         displayResults(data, t.color, pre);
                         drawPathColored(data.hops, t.color);
+                        // RTT 데이터 수집
+                        addRttData(data.hops, t.host, t.color);
                     }
                 } catch (e) {
                     console.error(t.host, e);
                 }
             }
+            // RTT 그래프 업데이트
+            updateRttChart();
             // 로딩 메시지 제거
             loadingDiv.remove();
             traceBtn.disabled = false;
             traceBtn.innerHTML = '🔍 경로 추적 시작';
         }
+
+        // RTT 데이터 추가
+        function addRttData(hops, host, colorHex) {
+            var rttValues = [];
+            var labels = [];
+            hops.forEach(function (hop) {
+                labels.push('Hop ' + hop.ttl);
+                if (hop.rtts && hop.rtts.length > 0) {
+                    // 평균 RTT 계산
+                    var avgRtt = hop.rtts.reduce(function (a, b) { return a + b; }, 0) / hop.rtts.length;
+                    rttValues.push(avgRtt);
+                } else {
+                    rttValues.push(null); // 타임아웃
+                }
+            });
+
+            rttDatasets.push({
+                label: host,
+                data: rttValues,
+                borderColor: colorHex,
+                backgroundColor: colorHex + '33',
+                borderWidth: 2,
+                pointRadius: 4,
+                pointBackgroundColor: colorHex,
+                tension: 0.3,
+                spanGaps: true
+            });
+        }
+
+        // RTT 차트 업데이트
+        function updateRttChart() {
+            if (rttDatasets.length === 0) return;
+
+            var graphSection = document.getElementById('rttGraphSection');
+            graphSection.style.display = 'block';
+
+            // 최대 홉 수 찾기
+            var maxHops = 0;
+            rttDatasets.forEach(function (ds) {
+                if (ds.data.length > maxHops) maxHops = ds.data.length;
+            });
+
+            // 라벨 생성
+            var labels = [];
+            for (var i = 1; i <= maxHops; i++) {
+                labels.push(i);
+            }
+
+            // 통계 계산
+            var allRtts = [];
+            rttDatasets.forEach(function (ds) {
+                ds.data.forEach(function (v) {
+                    if (v !== null) allRtts.push(v);
+                });
+            });
+            var avgRtt = allRtts.length > 0 ? (allRtts.reduce(function (a, b) { return a + b; }, 0) / allRtts.length) : 0;
+            var maxRtt = allRtts.length > 0 ? Math.max.apply(null, allRtts) : 0;
+
+            // 통계 표시
+            document.getElementById('rttStats').innerHTML =
+                '<div class="rtt-stat"><span class="rtt-stat-label">평균:</span><span class="rtt-stat-value avg">' + avgRtt.toFixed(1) + 'ms</span></div>' +
+                '<div class="rtt-stat"><span class="rtt-stat-label">최대:</span><span class="rtt-stat-value max">' + maxRtt.toFixed(1) + 'ms</span></div>';
+
+            // 레전드 표시
+            var legendHtml = '';
+            rttDatasets.forEach(function (ds) {
+                legendHtml += '<div class="rtt-legend-item"><span class="rtt-legend-color" style="background:' + ds.borderColor + '"></span>' + ds.label + '</div>';
+            });
+            document.getElementById('rttLegend').innerHTML = legendHtml;
+
+            // 차트 생성/업데이트
+            var ctx = document.getElementById('rttChart').getContext('2d');
+
+            if (rttChart) {
+                rttChart.destroy();
+            }
+
+            rttChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    labels: labels,
+                    datasets: rttDatasets
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    plugins: {
+                        legend: {
+                            display: false
+                        },
+                        tooltip: {
+                            backgroundColor: 'rgba(0, 0, 0, 0.8)',
+                            titleColor: '#fff',
+                            bodyColor: '#fff',
+                            padding: 10,
+                            displayColors: true,
+                            callbacks: {
+                                label: function (context) {
+                                    if (context.raw === null) return context.dataset.label + ': timeout';
+                                    return context.dataset.label + ': ' + context.raw.toFixed(1) + 'ms';
+                                }
+                            }
+                        }
+                    },
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: 'Hop',
+                                color: '#a0a0b0',
+                                font: { size: 10 }
+                            },
+                            ticks: {
+                                color: '#a0a0b0',
+                                font: { size: 9 }
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.05)'
+                            }
+                        },
+                        y: {
+                            title: {
+                                display: true,
+                                text: 'RTT (ms)',
+                                color: '#a0a0b0',
+                                font: { size: 10 }
+                            },
+                            ticks: {
+                                color: '#a0a0b0',
+                                font: { size: 9 }
+                            },
+                            grid: {
+                                color: 'rgba(255, 255, 255, 0.05)'
+                            },
+                            beginAtZero: true
+                        }
+                    }
+                }
+            });
+        }
+
+        // clearPath 시 RTT 데이터도 초기화
+        var originalClearPath = clearPath;
+        clearPath = function () {
+            originalClearPath();
+            rttDatasets = [];
+            if (rttChart) {
+                rttChart.destroy();
+                rttChart = null;
+            }
+            document.getElementById('rttGraphSection').style.display = 'none';
+        };
 
         function drawPathColored(hops, colorHex) {
             var validHops = hops.filter(function (h) { return h.latitude != null && h.longitude != null; });
