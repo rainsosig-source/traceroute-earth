@@ -605,9 +605,10 @@
                     var phi = Math.acos(point.y);
                     var theta = Math.atan2(point.z, -point.x);
                     var lat = 90 - (phi * 180 / Math.PI);
-                    // atan2는 -π ~ π 반환, 0 ~ 2π로 정규화 후 경도 계산
-                    if (theta < 0) theta += 2 * Math.PI;
                     var lon = (theta * 180 / Math.PI) - 180;
+                    // 경도 정규화 (-180 ~ 180)
+                    if (lon < -180) lon += 360;
+                    if (lon > 180) lon -= 360;
 
                     tooltip.style.left = (e.clientX + 15) + 'px';
                     tooltip.style.top = (e.clientY + 15) + 'px';
@@ -843,19 +844,9 @@
             resultsDiv.innerHTML = '';
             clearPath();
 
-            // 결과를 담을 pre 태그 미리 생성
-            var pre = document.createElement('pre');
-            pre.style.cssText = 'font-family:monospace;font-size:0.75rem;color:#a0a0b0;white-space:pre-wrap;padding:0.5rem;margin:0;';
-            resultsDiv.appendChild(pre);
-
-            // 로딩 메시지용 div 생성
-            var loadingDiv = document.createElement('div');
-            loadingDiv.className = 'loading-msg';
-            resultsDiv.appendChild(loadingDiv);
-
             for (var i = 0; i < targets.length; i++) {
                 var t = targets[i];
-                loadingDiv.textContent = t.host + ' 추적 중... (' + (i + 1) + '/' + targets.length + ')';
+                resultsDiv.innerHTML = '<div class="loading-msg">' + t.host + ' 추적 중... (' + (i + 1) + '/' + targets.length + ')</div>';
                 try {
                     var res = await fetch('/route/trace', {
                         method: 'POST',
@@ -864,15 +855,13 @@
                     });
                     var data = await res.json();
                     if (data.success) {
-                        displayResults(data, t.color, pre);
+                        displayResults(data, t.color);
                         drawPathColored(data.hops, t.color);
                     }
                 } catch (e) {
                     console.error(t.host, e);
                 }
             }
-            // 로딩 메시지 제거
-            loadingDiv.remove();
             traceBtn.disabled = false;
             traceBtn.innerHTML = '🔍 경로 추적 시작';
         }
@@ -920,35 +909,27 @@
             hopMarkers.push(endM);
         }
 
-        function displayResults(data, colorHex, pre) {
+        function displayResults(data, colorHex) {
             var hops = data.hops || [];
-            // pre가 전달되지 않으면 기존 방식으로 찾거나 생성
+            var pre = document.getElementById('results').querySelector('pre');
             if (!pre) {
-                pre = document.getElementById('results').querySelector('pre');
-                if (!pre) {
-                    pre = document.createElement('pre');
-                    pre.style.cssText = 'font-family:monospace;font-size:0.75rem;color:#a0a0b0;white-space:pre-wrap;padding:0.5rem;margin:0;';
-                    document.getElementById('results').innerHTML = '';
-                    document.getElementById('results').appendChild(pre);
-                }
+                pre = document.createElement('pre');
+                pre.style.cssText = 'font-family:monospace;font-size:0.75rem;color:#a0a0b0;white-space:pre-wrap;padding:0.5rem;margin:0;';
+                document.getElementById('results').innerHTML = '';
+                document.getElementById('results').appendChild(pre);
             }
             var line = '';
             if (colorHex) {
                 line += '<span style="color:' + colorHex + '">■</span> ';
             }
-            line += 'traceroute to ' + data.target + ' (' + (data.target_ip || '') + ')\n';
+            line += 'traceroute to ' + data.target + ' (' + (data.target_ip || '') + ')\\n';
             hops.forEach(function (hop) {
                 var rtt = (hop.rtts && hop.rtts.length > 0) ? hop.rtts.map(function (r) { return r.toFixed(1) + 'ms'; }).join(' ') : '* * *';
                 var host = hop.hostname || hop.ip || '*';
                 var country = hop.country ? ' [' + hop.country + ']' : '';
-                // 호스트명에 \n 문자열이 있으면 실제 줄바꿈으로 치환
-                host = host.replace(/\\n/g, '\n');
-                line += '  ' + hop.ttl + '  ' + host + country + '  ' + rtt + '\n';
+                line += '  ' + hop.ttl + '  ' + host + country + '  ' + rtt + '\\n';
             });
-            // 연속된 줄바꿈을 하나로 처리
-            line = line.replace(/\n{2,}/g, '\n');
-            // 마지막에 빈 줄 하나 추가 (다음 결과와 구분)
-            line += '\n';
+            line += '\\n';
             pre.innerHTML += line;
         }
 
