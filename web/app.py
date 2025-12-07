@@ -10,14 +10,15 @@ from collections import Counter
 from datetime import datetime
 
 app = Flask(__name__, static_folder='static', static_url_path='/static')
-app.secret_key = '***REMOVED***'  # Required for session
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'dev-secret-key-change-in-production')
 app.register_blueprint(route_bp)
 
-# Database Configuration
-DB_HOST = "localhost"
-DB_USER = "root"
-DB_PASS = "***REMOVED***"
-DB_NAME = "podcast"
+# Database Configuration (from environment variables)
+DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_USER = os.environ.get('DB_USER', 'root')
+DB_PASS = os.environ.get('DB_PASS', '')
+DB_NAME = os.environ.get('DB_NAME', 'podcast')
+
 
 def get_db_connection():
     return pymysql.connect(
