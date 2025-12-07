@@ -484,6 +484,67 @@
             border-radius: 2px;
         }
 
+        /* 에러 및 성공 메시지 */
+        .error-toast {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.4);
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            color: #fca5a5;
+            font-size: 0.8rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .success-toast {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.4);
+            border-radius: 0.5rem;
+            padding: 0.75rem;
+            margin-bottom: 0.5rem;
+            color: #6ee7b7;
+            font-size: 0.8rem;
+        }
+
+        /* 내보내기 버튼 */
+        .export-section {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--border);
+            display: none;
+        }
+
+        .export-btns {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .export-btn {
+            flex: 1;
+            padding: 0.5rem;
+            background: rgba(99, 102, 241, 0.1);
+            border: 1px solid var(--accent);
+            border-radius: 0.4rem;
+            color: var(--accent);
+            font-size: 0.75rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .export-btn:hover {
+            background: rgba(99, 102, 241, 0.2);
+        }
+
+        /* RTT 이상치 표시 */
+        .rtt-high {
+            color: #f59e0b !important;
+        }
+
+        .rtt-critical {
+            color: #ef4444 !important;
+        }
+
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
@@ -596,6 +657,12 @@
             </div>
             <div class="rtt-legend" id="rttLegend"></div>
         </div>
+        <div class="export-section" id="exportSection">
+            <div class="export-btns">
+                <button class="export-btn" onclick="exportJSON()">📄 JSON 내보내기</button>
+                <button class="export-btn" onclick="exportCSV()">📊 CSV 내보내기</button>
+            </div>
+        </div>
         <div class="results-section" id="results">
             <div class="loading-msg">대상 호스트를 입력하고 추적을 시작하세요</div>
         </div>
@@ -613,6 +680,9 @@
         // RTT 그래프 관련 변수
         let rttChart = null;
         let rttDatasets = [];
+
+        // 추적 결과 저장용 (내보내기 기능)
+        let traceResults = [];
 
         var colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
         var colorIdx = 1;
@@ -1088,28 +1158,89 @@
                 var t = targets[i];
                 loadingDiv.textContent = t.host + ' 추적 중... (' + (i + 1) + '/' + targets.length + ')';
                 try {
+                    var controller = new AbortController();
+                    var timeoutId = setTimeout(function () { controller.abort(); }, 90000); // 90초 타임아웃
+
                     var res = await fetch('/route/trace', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ target: t.host, max_hops: maxHops, probes: probes })
+                        body: JSON.stringify({ target: t.host, max_hops: maxHops, probes: probes }),
+                        signal: controller.signal
                     });
+                    clearTimeout(timeoutId);
+
+                    if (!res.ok) {
+                        throw new Error('서버 응답 오류: ' + res.status);
+                    }
                     var data = await res.json();
                     if (data.success) {
                         displayResults(data, t.color, pre);
                         drawPathColored(data.hops, t.color);
                         // RTT 데이터 수집
                         addRttData(data.hops, t.host, t.color);
+                        // 결과 저장
+                        traceResults.push({ target: t.host, color: t.color, data: data });
+                    } else {
+                        showError(t.host + ': ' + (data.error || '추적 실패'));
                     }
                 } catch (e) {
                     console.error(t.host, e);
+                    if (e.name === 'AbortError') {
+                        showError(t.host + ': 요청 시간 초과 (90초)');
+                    } else {
+                        showError(t.host + ': ' + (e.message || '네트워크 오류'));
+                    }
                 }
             }
             // RTT 그래프 업데이트
             updateRttChart();
+            // 내보내기 버튼 표시
+            if (traceResults.length > 0) {
+                document.getElementById('exportSection').style.display = 'block';
+            }
             // 로딩 메시지 제거
             loadingDiv.remove();
             traceBtn.disabled = false;
             traceBtn.innerHTML = '🔍 경로 추적 시작';
+        }
+
+        // 에러 메시지 표시
+        function showError(message) {
+            var errorDiv = document.createElement('div');
+            errorDiv.className = 'error-toast';
+            errorDiv.innerHTML = '⚠️ ' + message;
+            resultsDiv.insertBefore(errorDiv, resultsDiv.firstChild);
+        }
+
+        // JSON 내보내기
+        function exportJSON() {
+            var dataStr = JSON.stringify(traceResults, null, 2);
+            var blob = new Blob([dataStr], { type: 'application/json' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'traceroute_' + new Date().toISOString().slice(0, 10) + '.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        // CSV 내보내기
+        function exportCSV() {
+            var csv = 'Target,Hop,IP,Hostname,Country,RTT(ms),Latitude,Longitude\n';
+            traceResults.forEach(function (result) {
+                var target = result.target;
+                result.data.hops.forEach(function (hop) {
+                    var rtt = (hop.rtts && hop.rtts.length > 0) ? hop.rtts[0].toFixed(1) : '';
+                    csv += [target, hop.ttl, hop.ip || '*', hop.hostname || '', hop.country || '', rtt, hop.latitude || '', hop.longitude || ''].join(',') + '\n';
+                });
+            });
+            var blob = new Blob([csv], { type: 'text/csv' });
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = 'traceroute_' + new Date().toISOString().slice(0, 10) + '.csv';
+            a.click();
+            URL.revokeObjectURL(url);
         }
 
         // RTT 데이터 추가
@@ -1261,11 +1392,13 @@
         clearPath = function () {
             originalClearPath();
             rttDatasets = [];
+            traceResults = [];
             if (rttChart) {
                 rttChart.destroy();
                 rttChart = null;
             }
             document.getElementById('rttGraphSection').style.display = 'none';
+            document.getElementById('exportSection').style.display = 'none';
         };
 
         function drawPathColored(hops, colorHex) {
@@ -1329,12 +1462,27 @@
             }
             line += 'traceroute to ' + data.target + ' (' + (data.target_ip || '') + ')\n';
             hops.forEach(function (hop) {
-                var rtt = (hop.rtts && hop.rtts.length > 0) ? hop.rtts.map(function (r) { return r.toFixed(1) + 'ms'; }).join(' ') : '* * *';
+                var rttText = '* * *';
+                var rttClass = '';
+                if (hop.rtts && hop.rtts.length > 0) {
+                    var avgRtt = hop.rtts.reduce(function (a, b) { return a + b; }, 0) / hop.rtts.length;
+                    rttText = hop.rtts.map(function (r) { return r.toFixed(1) + 'ms'; }).join(' ');
+                    // RTT 이상치 하이라이트: 100ms 이상 노란색, 200ms 이상 빨간색
+                    if (avgRtt >= 200) {
+                        rttClass = 'rtt-critical';
+                    } else if (avgRtt >= 100) {
+                        rttClass = 'rtt-high';
+                    }
+                }
                 var host = hop.hostname || hop.ip || '*';
                 var country = hop.country ? ' [' + hop.country + ']' : '';
                 // 호스트명에 \n 문자열이 있으면 실제 줄바꿈으로 치환
                 host = host.replace(/\\n/g, '\n');
-                line += '  ' + hop.ttl + '  ' + host + country + '  ' + rtt + '\n';
+                if (rttClass) {
+                    line += '  ' + hop.ttl + '  ' + host + country + '  <span class="' + rttClass + '">' + rttText + '</span>\n';
+                } else {
+                    line += '  ' + hop.ttl + '  ' + host + country + '  ' + rttText + '\n';
+                }
             });
             // 연속된 줄바꿈을 하나로 처리
             line = line.replace(/\n{2,}/g, '\n');
