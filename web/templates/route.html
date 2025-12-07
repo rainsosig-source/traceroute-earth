@@ -399,15 +399,44 @@
         @media (max-width: 768px) {
             .sidebar {
                 width: 100%;
-                height: 50vh;
+                height: 60vh;
                 top: auto;
                 bottom: 0;
                 border-left: none;
                 border-top: 1px solid var(--border);
+                overflow-y: auto;
             }
 
             #globe-container {
-                height: 50vh;
+                height: 40vh;
+            }
+
+            .sidebar-header {
+                padding: 0.75rem 1rem;
+            }
+
+            .sidebar-header h1 {
+                font-size: 1.2rem;
+            }
+
+            .subtitle {
+                font-size: 0.8rem;
+            }
+
+            .input-section {
+                padding: 0.75rem 1rem;
+            }
+
+            .options-section {
+                padding: 0.5rem 1rem;
+            }
+
+            .results-section {
+                padding: 0.5rem;
+            }
+
+            .back-btn {
+                margin-bottom: 0.5rem;
             }
         }
     </style>
@@ -461,6 +490,13 @@
                     <span class="toggle-slider"></span>
                 </label>
             </div>
+            <div class="option-row">
+                <span class="option-label">✨ 패킷 애니메이션</span>
+                <label class="toggle-switch">
+                    <input type="checkbox" id="animationToggle" onchange="toggleAnimation()" checked>
+                    <span class="toggle-slider"></span>
+                </label>
+            </div>
         </div>
         <div class="results-section" id="results">
             <div class="loading-msg">대상 호스트를 입력하고 추적을 시작하세요</div>
@@ -471,6 +507,10 @@
         let scene, camera, renderer, globe, pathLines = [], hopMarkers = [], controls;
         let cloudsMesh = null, sunLight = null, ambientLight = null;
         let cloudsEnabled = true, sunEnabled = true;
+
+        // 애니메이션 관련 변수
+        let animatedPackets = [];  // { mesh, points, progress, speed, color }
+        let animationEnabled = true;
 
         var colors = ['#ef4444', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899'];
         var colorIdx = 1;
@@ -645,6 +685,40 @@
             if (controls) controls.update();
             if (cloudsMesh && cloudsEnabled) cloudsMesh.rotation.y += 0.0002;
             if (sunEnabled) updateSunPosition();
+
+            // 패킷 애니메이션 업데이트
+            if (animationEnabled) {
+                animatedPackets.forEach(packet => {
+                    packet.progress += packet.speed;
+                    if (packet.progress >= 1) {
+                        packet.progress = 0;  // 루프
+                    }
+                    // 현재 위치 계산
+                    const idx = Math.floor(packet.progress * (packet.points.length - 1));
+                    const nextIdx = Math.min(idx + 1, packet.points.length - 1);
+                    const localT = (packet.progress * (packet.points.length - 1)) - idx;
+                    const pos = new THREE.Vector3().lerpVectors(packet.points[idx], packet.points[nextIdx], localT);
+                    packet.mesh.position.copy(pos);
+
+                    // 꼬리 효과 (이전 위치들에 작은 점들)
+                    if (packet.trail) {
+                        packet.trail.forEach((t, i) => {
+                            const trailProgress = packet.progress - (i + 1) * 0.02;
+                            if (trailProgress >= 0) {
+                                const tIdx = Math.floor(trailProgress * (packet.points.length - 1));
+                                const tNextIdx = Math.min(tIdx + 1, packet.points.length - 1);
+                                const tLocalT = (trailProgress * (packet.points.length - 1)) - tIdx;
+                                const tPos = new THREE.Vector3().lerpVectors(packet.points[tIdx], packet.points[tNextIdx], tLocalT);
+                                t.position.copy(tPos);
+                                t.visible = true;
+                            } else {
+                                t.visible = false;
+                            }
+                        });
+                    }
+                });
+            }
+
             renderer.render(scene, camera);
         }
 
@@ -670,6 +744,16 @@
             } else if (cloudsMesh) {
                 cloudsMesh.visible = false;
             }
+        }
+
+        // 패킷 애니메이션 토글
+        function toggleAnimation() {
+            animationEnabled = document.getElementById('animationToggle').checked;
+            // 기존 패킷들의 가시성 변경
+            animatedPackets.forEach(p => {
+                p.mesh.visible = animationEnabled;
+                if (p.trail) p.trail.forEach(t => t.visible = animationEnabled && t.visible);
+            });
         }
 
         // 태양 위치 토글
@@ -715,6 +799,12 @@
         function clearPath() {
             pathLines.forEach(l => scene.remove(l));
             hopMarkers.forEach(m => scene.remove(m));
+            // 애니메이션 패킷 제거
+            animatedPackets.forEach(p => {
+                scene.remove(p.mesh);
+                if (p.trail) p.trail.forEach(t => scene.remove(t));
+            });
+            animatedPackets = [];
             pathLines = [];
             hopMarkers = [];
             startMarker = null;
@@ -778,7 +868,7 @@
             return m;
         }
 
-        function createArc(start, end, color) {
+        function createArc(start, end, color, addAnimation = true) {
             const group = new THREE.Group();
 
             // 호(선) 그리기
@@ -791,7 +881,7 @@
             }
             const line = new THREE.Line(
                 new THREE.BufferGeometry().setFromPoints(points),
-                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.8 })
+                new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.5 })
             );
             group.add(line);
 
@@ -806,6 +896,45 @@
             arrow.position.copy(lastPoint);
             arrow.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), direction);
             group.add(arrow);
+
+            // 애니메이션용 빛나는 패킷 추가
+            if (addAnimation && animationEnabled) {
+                // 메인 패킷 (빛나는 구체)
+                const packetGeo = new THREE.SphereGeometry(0.012, 16, 16);
+                const packetMat = new THREE.MeshBasicMaterial({
+                    color: 0xffffff,
+                    transparent: true,
+                    opacity: 1
+                });
+                const packetMesh = new THREE.Mesh(packetGeo, packetMat);
+                packetMesh.position.copy(points[0]);
+                scene.add(packetMesh);
+
+                // 꼬리 효과 (fade out 되는 작은 점들)
+                const trail = [];
+                for (let i = 0; i < 5; i++) {
+                    const trailGeo = new THREE.SphereGeometry(0.008 - i * 0.001, 8, 8);
+                    const trailMat = new THREE.MeshBasicMaterial({
+                        color: color,
+                        transparent: true,
+                        opacity: 0.7 - i * 0.12
+                    });
+                    const trailMesh = new THREE.Mesh(trailGeo, trailMat);
+                    trailMesh.visible = false;
+                    scene.add(trailMesh);
+                    trail.push(trailMesh);
+                }
+
+                // 랜덤한 시작 위치와 속도
+                animatedPackets.push({
+                    mesh: packetMesh,
+                    points: points,
+                    progress: Math.random(),  // 랜덤 시작 위치
+                    speed: 0.008 + Math.random() * 0.004,  // 약간 다른 속도
+                    color: color,
+                    trail: trail
+                });
+            }
 
             return group;
         }
